@@ -5,6 +5,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+#[cfg(feature = "decision")]
+use crate::decision::{DecisionEvent, DecisionToolSelector, DecisionWorkflowResources};
+
 use loop_ai::{
     AssistantMessage, AssistantMessageEvent, ImageContent, Message, Model, SimpleStreamOptions,
     TextContent, ThinkingBudgets, ThinkingLevel, Tool, ToolCall, ToolResultContent,
@@ -456,6 +459,12 @@ pub enum AgentEvent {
         /// One-line human-readable step description.
         message: String,
     },
+    /// A local System One decision was applied to the current turn.
+    #[cfg(feature = "decision")]
+    Decision {
+        /// Structured decision details, excluding raw task state.
+        decision: DecisionEvent,
+    },
     /// New turn begins.
     TurnStart,
     /// Turn completes.
@@ -522,6 +531,8 @@ impl AgentEvent {
             Self::AgentStart => "agent_start",
             Self::AgentEnd { .. } => "agent_end",
             Self::Progress { .. } => "progress",
+            #[cfg(feature = "decision")]
+            Self::Decision { .. } => "decision",
             Self::TurnStart => "turn_start",
             Self::TurnEnd { .. } => "turn_end",
             Self::MessageStart { .. } => "message_start",
@@ -629,6 +640,13 @@ pub struct AgentLoopConfig {
     pub stream_options: SimpleStreamOptions,
     /// Thinking budgets.
     pub thinking_budgets: Option<ThinkingBudgets>,
+    /// Optional local decision-model tool selector. When absent, the loop
+    /// presents the full tool list exactly as it did before decision models.
+    #[cfg(feature = "decision")]
+    pub decision_tool_selector: Option<DecisionToolSelector>,
+    /// Skills and prompt templates available to the task-triage router.
+    #[cfg(feature = "decision")]
+    pub decision_workflow_resources: DecisionWorkflowResources,
 }
 
 impl AgentLoopConfig {
@@ -650,6 +668,10 @@ impl AgentLoopConfig {
             after_tool_call: None,
             stream_options: SimpleStreamOptions::default(),
             thinking_budgets: None,
+            #[cfg(feature = "decision")]
+            decision_tool_selector: None,
+            #[cfg(feature = "decision")]
+            decision_workflow_resources: DecisionWorkflowResources::default(),
         }
     }
 }

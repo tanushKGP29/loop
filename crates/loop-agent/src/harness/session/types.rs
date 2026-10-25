@@ -249,6 +249,13 @@ pub enum PendingSessionWrite {
         /// Summary.
         summary: String,
     },
+    /// Custom structured session-history entry.
+    Custom {
+        /// Application-defined entry type.
+        custom_type: String,
+        /// JSON-safe payload.
+        data: Value,
+    },
     /// Leaf move.
     Leaf {
         /// Target.

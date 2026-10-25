@@ -102,6 +102,65 @@ impl Default for SandboxSettings {
     }
 }
 
+/// Local decision-model provider selection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DecisionProvider {
+    /// Do not call a decision model. This is the default and preserves Loop's
+    /// existing behavior.
+    #[default]
+    Off,
+    /// TypeSafe System One protocol, served locally by Lev.
+    Systemone,
+}
+
+/// Optional local decision-model settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DecisionSettings {
+    /// Provider protocol. Set to `systemone` to enable Lev.
+    #[serde(default)]
+    pub provider: DecisionProvider,
+    /// Local System One service URL.
+    #[serde(default = "default_decision_base_url")]
+    pub base_url: String,
+    /// API token sent to the local service. Lev accepts `local`.
+    #[serde(default = "default_decision_api_key")]
+    pub api_key: String,
+    /// Optional model name included in observability only when the server
+    /// omits its response model name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Normal request timeout in seconds. The first local call receives a
+    /// larger boot allowance automatically.
+    #[serde(default = "default_decision_timeout_s")]
+    pub timeout_s: u64,
+}
+
+fn default_decision_base_url() -> String {
+    "http://127.0.0.1:8000".into()
+}
+
+fn default_decision_api_key() -> String {
+    "local".into()
+}
+
+fn default_decision_timeout_s() -> u64 {
+    60
+}
+
+impl Default for DecisionSettings {
+    fn default() -> Self {
+        Self {
+            provider: DecisionProvider::Off,
+            base_url: default_decision_base_url(),
+            api_key: default_decision_api_key(),
+            model: None,
+            timeout_s: default_decision_timeout_s(),
+        }
+    }
+}
+
 impl SandboxSettings {
     /// Human-readable short status (settings only; prefer harness `sandbox_info` for live details).
     pub fn display(&self) -> String {
@@ -167,6 +226,9 @@ pub struct Settings {
     /// Sandbox.
     #[serde(default)]
     pub sandbox: SandboxSettings,
+    /// Optional local decision model. Disabled by default.
+    #[serde(default)]
+    pub decision: DecisionSettings,
     /// `web_fetch` tool (`webFetch` in settings.json).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_fetch: Option<loop_agent::harness::WebFetchConfig>,
@@ -269,6 +331,7 @@ impl Default for Settings {
             double_escape_action: default_double_escape(),
             ui_mode: default_ui_mode(),
             sandbox: SandboxSettings::default(),
+            decision: DecisionSettings::default(),
             web_fetch: None,
             web_search: None,
             bash: None,
@@ -527,6 +590,19 @@ pub fn set_skill_disabled(list: &mut Vec<String>, name: &str, enabled: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decision_settings_parse_the_lev_example() {
+        let settings: Settings = serde_json::from_str(
+            r#"{"decision":{"provider":"systemone","base_url":"http://127.0.0.1:8000","api_key":"local","timeout_s":60}}"#,
+        )
+        .unwrap();
+        assert_eq!(settings.decision.provider, DecisionProvider::Systemone);
+        assert_eq!(settings.decision.base_url, "http://127.0.0.1:8000");
+        assert_eq!(settings.decision.api_key, "local");
+        assert_eq!(settings.decision.timeout_s, 60);
+        assert_eq!(Settings::default().decision.provider, DecisionProvider::Off);
+    }
 
     #[test]
     fn disabled_mcp_servers_round_trip_and_merge() {
