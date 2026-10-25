@@ -8,6 +8,7 @@ use loop_ai::{
 };
 use tracing::Span;
 
+#[cfg(feature = "decision")]
 use crate::decision::DecisionEvent;
 use crate::types::{AgentMessage, AgentToolResult};
 
@@ -68,4 +69,5 @@ pub(crate) fn tool_span(_tool_call: &ToolCall, _args: &serde_json::Value) -> Spa
 pub(crate) fn record_tool_result(_span: &Span, _result: &AgentToolResult, _is_error: bool) {}
 
 /// Record a decision outcome (disabled).
+#[cfg(feature = "decision")]
 pub(crate) fn record_decision(_decision: &DecisionEvent) {}

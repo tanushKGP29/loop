@@ -21,7 +21,7 @@ use crate::types::{AgentContext, AgentMessage, AgentTool};
 use crate::Message;
 
 /// A set of related decision questions sent to a decision model.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DecisionRequest {
     /// Compact, task-relevant context. It must not contain secrets.
     pub state: Value,
@@ -30,7 +30,7 @@ pub struct DecisionRequest {
 }
 
 /// A System One question.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum DecisionQuestion {
     /// Select exactly one named option.
@@ -409,6 +409,15 @@ pub struct TurnDecisionAdvice {
     pub decision: Decision,
 }
 
+/// A successful decision reused only while its complete System One request is
+/// unchanged. The request contains the latest user message and live tool
+/// registry, so a steering message or tool-registry update invalidates it.
+#[derive(Debug, Clone)]
+pub(crate) struct TurnDecisionCache {
+    request: DecisionRequest,
+    advice: TurnDecisionAdvice,
+}
+
 /// Serializable record emitted after Loop applies a decision.
 #[derive(Debug, Clone, Serialize)]
 pub struct DecisionEvent {
@@ -603,6 +612,47 @@ impl DecisionToolSelector {
             triage,
             decision,
         })
+    }
+
+    /// Assess a turn, reusing a prior successful assessment only when the
+    /// System One request is byte-for-byte equivalent in memory. Returns the
+    /// advice and whether it was reused from the current agent-loop run.
+    pub(crate) async fn assess_turn_cached(
+        &self,
+        context: &AgentContext,
+        resources: &DecisionWorkflowResources,
+        cache: &mut Option<TurnDecisionCache>,
+    ) -> Result<(TurnDecisionAdvice, bool), DecisionError> {
+        let tools = context
+            .tools
+            .as_ref()
+            .ok_or_else(|| DecisionError::InvalidResponse {
+                message: "task assessment requires a tool registry".into(),
+            })?;
+        if tools.is_empty() {
+            return Err(DecisionError::InvalidResponse {
+                message: "task assessment requires at least one tool".into(),
+            });
+        }
+        let request = turn_workflow_request(context, tools);
+        if let Some(cached) = cache.as_ref().filter(|cached| cached.request == request) {
+            return Ok((cached.advice.clone(), true));
+        }
+
+        let decision = self.model.decide(request.clone()).await?;
+        let triage = task_triage_from_decision(&decision)?;
+        let selected_tool = selected_tool_from_decision(&decision, tools, self.policy)?;
+        let advice = TurnDecisionAdvice {
+            selected_tool,
+            route: resources.route_for(triage.task_type),
+            triage,
+            decision,
+        };
+        *cache = Some(TurnDecisionCache {
+            request,
+            advice: advice.clone(),
+        });
+        Ok((advice, false))
     }
 
     /// Select one tool for the current turn, or return `None` to retain the
@@ -1188,6 +1238,86 @@ mod tests {
         );
     }
 
+    fn test_tool(name: &str) -> AgentTool {
+        AgentTool::simple(
+            name,
+            name,
+            format!("{name} tool"),
+            serde_json::json!({"type": "object"}),
+            |_, _, _, _| async { Ok(crate::types::AgentToolResult::text("")) },
+        )
+    }
+
+    fn turn_decision(tool: &str) -> Decision {
+        Decision {
+            answers: BTreeMap::from([
+                (
+                    "tool".into(),
+                    DecisionAnswer::Choice {
+                        value: tool.into(),
+                        probabilities: BTreeMap::from([(tool.into(), 1.0)]),
+                        confidence: 0.9,
+                    },
+                ),
+                (
+                    "task_type".into(),
+                    DecisionAnswer::Choice {
+                        value: "inspect".into(),
+                        probabilities: BTreeMap::from([("inspect".into(), 1.0)]),
+                        confidence: 0.9,
+                    },
+                ),
+                (
+                    "critical_context_missing".into(),
+                    DecisionAnswer::Noul {
+                        probability_yes: 0.1,
+                        confidence: 0.8,
+                    },
+                ),
+            ]),
+            model: Some("faux".into()),
+            latency_ms: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn cache_reuses_only_an_unchanged_turn_request() {
+        let model = Arc::new(FauxDecisionModel::new([
+            Ok(turn_decision("read")),
+            Ok(turn_decision("bash")),
+        ]));
+        let selector = DecisionToolSelector::new(model);
+        let mut context = AgentContext {
+            messages: vec![AgentMessage::user_text("Inspect the parser.")],
+            tools: Some(vec![test_tool("read")]),
+            ..Default::default()
+        };
+        let resources = DecisionWorkflowResources::default();
+        let mut cache = None;
+
+        let (first, reused) = selector
+            .assess_turn_cached(&context, &resources, &mut cache)
+            .await
+            .unwrap();
+        assert!(!reused);
+        assert_eq!(first.selected_tool.as_deref(), Some("read"));
+
+        let (second, reused) = selector
+            .assess_turn_cached(&context, &resources, &mut cache)
+            .await
+            .unwrap();
+        assert!(reused);
+        assert_eq!(second.selected_tool.as_deref(), Some("read"));
+
+        context.tools.as_mut().unwrap().push(test_tool("bash"));
+        let (third, reused) = selector
+            .assess_turn_cached(&context, &resources, &mut cache)
+            .await
+            .unwrap();
+        assert!(!reused);
+        assert_eq!(third.selected_tool.as_deref(), Some("bash"));
+    }
+
     #[tokio::test]
     async fn http_model_retries_one_server_error() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1263,7 +1393,10 @@ mod tests {
                             ("answer".into(), Some("Answer directly.".into())),
                             ("clarify".into(), Some("Ask for context.".into())),
                             ("execute".into(), Some("Run a command.".into())),
-                            ("inspect".into(), Some("Investigate without changes.".into())),
+                            (
+                                "inspect".into(),
+                                Some("Investigate without changes.".into()),
+                            ),
                             ("modify".into(), Some("Change files.".into())),
                         ]),
                     },
@@ -1276,14 +1409,10 @@ mod tests {
                 ),
             ]),
         };
-        let model = SystemOneHttpModel::new(
-            base_url,
-            api_key,
-            None,
-            Duration::from_secs(timeout_s),
-        )
-        .unwrap()
-        .with_first_call_timeout(Duration::from_secs(timeout_s));
+        let model =
+            SystemOneHttpModel::new(base_url, api_key, None, Duration::from_secs(timeout_s))
+                .unwrap()
+                .with_first_call_timeout(Duration::from_secs(timeout_s));
         let decision = model.decide(request).await.unwrap();
         assert!(matches!(
             decision.answers.get("tool"),

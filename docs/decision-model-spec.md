@@ -230,3 +230,19 @@ confidence, which is not comparable to System One probabilities.
 
 The remaining engineering priority is per-turn caching or hysteresis. Repeating
 a Lev decision for unchanged context costs roughly 25-31 seconds per call.
+
+## Per-turn Decision Cache
+
+The hand-written turn loop now keeps one successful `TurnDecisionCache` for
+the current agent-loop run. The cache key is the complete normalized System One
+request, which includes the latest user message plus the live tool names and
+descriptions. A repeated tool-loop iteration with the same request reuses the
+validated advisory result and does not make another Lev request or emit a
+duplicate `decision.evaluate` span. A steering/user message or any tool
+registry update changes that request and forces a new assessment.
+
+Failed, malformed, or unavailable decisions are never cached. They retain the
+existing safe full-toolset fallback. The focused unit suite verifies reuse and
+tool-registry invalidation with `FauxDecisionModel`; the ignored live Lev smoke
+test still passes. An interactive timing run should confirm the expected removal
+of repeated 25-31 second preflight waits within one turn.

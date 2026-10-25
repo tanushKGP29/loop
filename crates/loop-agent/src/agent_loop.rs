@@ -12,9 +12,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use crate::stream_fn::{resolve_stream_fn, StreamFn};
+#[cfg(feature = "decision")]
+use crate::telemetry::record_decision;
 use crate::telemetry::{
-    preflight_span, record_decision, record_tool_result, tool_span, turn_span, GenerationObserver,
-    RunObserver,
+    preflight_span, record_tool_result, tool_span, turn_span, GenerationObserver, RunObserver,
 };
 use crate::types::{
     AfterToolCallContext, AgentContext, AgentEvent, AgentEventSink, AgentLoopConfig,
@@ -222,6 +223,12 @@ async fn run_loop(
     } else {
         Vec::new()
     };
+    // Reuse an advisory decision while the exact latest-user-message/tool
+    // request remains unchanged. This prevents expensive System One calls on
+    // each tool-loop iteration, while steering messages and registry updates
+    // naturally invalidate the cache.
+    #[cfg(feature = "decision")]
+    let mut decision_cache = None;
 
     loop {
         let mut has_more_tool_calls = true;
@@ -256,10 +263,17 @@ async fn run_loop(
                 }
             }
 
-            let message =
-                stream_assistant_response(current_context, &config, cancel, emit, stream_fn)
-                    .instrument(turn.clone())
-                    .await;
+            let message = stream_assistant_response(
+                current_context,
+                &config,
+                cancel,
+                emit,
+                stream_fn,
+                #[cfg(feature = "decision")]
+                &mut decision_cache,
+            )
+            .instrument(turn.clone())
+            .await;
             new_messages.push(AgentMessage::assistant(message.clone()));
 
             if matches!(message.stop_reason, StopReason::Error | StopReason::Aborted) {
@@ -395,6 +409,7 @@ async fn stream_assistant_response(
     cancel: Option<&CancellationToken>,
     emit: &AgentEventSink,
     stream_fn: &StreamFn,
+    #[cfg(feature = "decision")] decision_cache: &mut Option<crate::decision::TurnDecisionCache>,
 ) -> AssistantMessage {
     let mut messages = context.messages.clone();
     if let Some(transform) = &config.transform_context {
@@ -408,13 +423,15 @@ async fn stream_assistant_response(
     #[cfg(feature = "decision")]
     let decision_advice = if let Some(selector) = &config.decision_tool_selector {
         match selector
-            .assess_turn(context, &config.decision_workflow_resources)
+            .assess_turn_cached(context, &config.decision_workflow_resources, decision_cache)
             .await
         {
-            Ok(advice) if selector.requires_clarification(&advice) => {
-                let decision = selector.event(&advice, "clarification_requested");
-                record_decision(&decision);
-                emit_ev(emit, AgentEvent::Decision { decision }).await;
+            Ok((advice, reused)) if selector.requires_clarification(&advice) => {
+                if !reused {
+                    let decision = selector.event(&advice, "clarification_requested");
+                    record_decision(&decision);
+                    emit_ev(emit, AgentEvent::Decision { decision }).await;
+                }
                 let message = clarification_message(&config.model);
                 context
                     .messages
@@ -435,11 +452,15 @@ async fn stream_assistant_response(
                 .await;
                 return message;
             }
-            Ok(advice) => {
-                let action = decision_action_text(&advice);
-                let decision = selector.event(&advice, action);
-                record_decision(&decision);
-                emit_ev(emit, AgentEvent::Decision { decision }).await;
+            Ok((advice, reused)) => {
+                if reused {
+                    tracing::debug!("reusing advisory decision for unchanged turn context");
+                } else {
+                    let action = decision_action_text(&advice);
+                    let decision = selector.event(&advice, action);
+                    record_decision(&decision);
+                    emit_ev(emit, AgentEvent::Decision { decision }).await;
+                }
                 Some(advice)
             }
             Err(error) => {

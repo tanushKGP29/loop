@@ -13,6 +13,7 @@ use loop_telemetry::{ObservationExt, TraceAttrs};
 use serde::Serialize;
 use tracing::Span;
 
+#[cfg(feature = "decision")]
 use crate::decision::DecisionEvent;
 use crate::types::{AgentMessage, AgentToolResult};
 
@@ -221,6 +222,7 @@ pub(crate) fn record_tool_result(span: &Span, result: &AgentToolResult, is_error
 }
 
 /// Attach one redacted System One decision to the current Langfuse trace.
+#[cfg(feature = "decision")]
 pub(crate) fn record_decision(decision: &DecisionEvent) {
     let span = obs::span(DECISION_SPAN_NAME);
     span.record_output(&decision.answers);
