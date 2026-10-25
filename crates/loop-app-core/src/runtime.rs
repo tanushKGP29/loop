@@ -2,9 +2,11 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::bail;
 
+use loop_agent::decision::{DecisionToolSelector, SystemOneHttpModel};
 use loop_agent::harness::{
     create_bash_tool_with, create_edit_tool, create_read_tool, create_session_repository,
     create_sqlite_session_store, create_write_tool, verify_web_search_key, AgentHarness,
@@ -22,7 +24,8 @@ use crate::config::paths::{
     sessions_db_path, settings_path,
 };
 use crate::config::settings::{
-    load_settings, set_disabled_name, set_skill_disabled, McpServerConfig, Settings,
+    load_settings, set_disabled_name, set_skill_disabled, DecisionProvider, McpServerConfig,
+    Settings,
 };
 use crate::config::trust::TrustStore;
 use crate::model_selection::StartupModel;
@@ -1386,6 +1389,31 @@ pub async fn bootstrap(opts: BootstrapOpts) -> anyhow::Result<Runtime> {
     harness
         .set_response_header_timeout_ms(settings.response_header_timeout_ms)
         .await;
+    if settings.decision.provider == DecisionProvider::Systemone {
+        match SystemOneHttpModel::new(
+            settings.decision.base_url.clone(),
+            settings.decision.api_key.clone(),
+            settings.decision.model.clone(),
+            Duration::from_secs(settings.decision.timeout_s),
+        ) {
+            Ok(model) => {
+                harness
+                    .set_decision_tool_selector(Some(DecisionToolSelector::new(Arc::new(model))))
+                    .await;
+                harness
+                    .set_decision_log_path(Some(agent_dir.join("decisions.jsonl")))
+                    .await;
+                tracing::info!(
+                    base_url = %settings.decision.base_url,
+                    "local System One decision model enabled"
+                );
+            }
+            Err(error) => tracing::warn!(
+                error = %error,
+                "local System One decision model disabled; Loop will use its normal tool path"
+            ),
+        }
+    }
 
     let native = loop_agent::native_backend::NativeBackend::new(Arc::clone(&harness)).await;
     let backend: Arc<dyn loop_protocol::AgentBackend> = native.clone();

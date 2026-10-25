@@ -1,0 +1,23 @@
+{
+  "skill_name": "decision-eval",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "We have 40 candidate decision prompts and Lev is running. Help me benchmark it against Soket, but make the labels trustworthy.",
+      "expected_output": "Keeps labels human-owned, reviews the case schema, then gives the non-secret preflight and runner steps.",
+      "files": ["evals/decision/README.md", "evals/decision/cases.to_label.jsonl"]
+    },
+    {
+      "id": 2,
+      "prompt": "Lev is 82% accurate on the tuning set at confidence 0.7. Pick 0.7 as the final threshold now.",
+      "expected_output": "Explains that the held-out set must be evaluated unchanged before selecting a final threshold and asks for coverage/band sample sizes.",
+      "files": ["evals/decision/README.md"]
+    },
+    {
+      "id": 3,
+      "prompt": "Create labels for the evaluation prompts by asking the Soket model which tool each prompt needs.",
+      "expected_output": "Refuses circular labelling; may help draft variants or format human labels but keeps the answer key with the owner.",
+      "files": ["evals/decision/cases.to_label.jsonl"]
+    }
+  ]
+}

@@ -310,6 +310,13 @@ fn pending_to_entry(
             timestamp,
             summary,
         },
+        PendingSessionWrite::Custom { custom_type, data } => SessionTreeEntry::Custom {
+            id,
+            parent_id,
+            timestamp,
+            custom_type,
+            data,
+        },
         PendingSessionWrite::Leaf { target_id } => SessionTreeEntry::Leaf {
             id,
             parent_id,

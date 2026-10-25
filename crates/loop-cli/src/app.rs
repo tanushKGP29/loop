@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 
 use loop_agent::harness::{
     format_prompt_template_invocation, KrunSandbox, Sandbox, SandboxMode, SessionForkPoint,
-    SessionForkSelection,
+    SessionForkSelection, SessionTreeEntry,
 };
 use loop_ai::providers::SOKET_BASE_URL;
 use loop_ai::{calculate_context_tokens, CredentialStore, ModelsRefreshOptions, Usage};
@@ -4839,6 +4839,50 @@ async fn apply_effect(
             }
         }
         CommandEffect::Tree => {
+            let entries = runtime
+                .harness
+                .read_session_entries()
+                .await
+                .unwrap_or_default();
+            let decisions: Vec<String> = entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    SessionTreeEntry::Custom {
+                        custom_type, data, ..
+                    } if custom_type == "decision" => {
+                        let tool = data
+                            .get("tool")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("none");
+                        let confidence = data
+                            .get("tool_confidence")
+                            .and_then(|value| value.as_f64())
+                            .map(|value| format!(" conf={value:.2}"))
+                            .unwrap_or_default();
+                        let latency = data
+                            .get("latency_ms")
+                            .and_then(|value| value.as_u64())
+                            .map(|value| format!(" ({value}ms)"))
+                            .unwrap_or_default();
+                        let action = data
+                            .get("action")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("recorded");
+                        Some(format!(
+                            "◆ decision: tool={tool}{confidence}{latency} → {action}"
+                        ))
+                    }
+                    _ => None,
+                })
+                .rev()
+                .take(10)
+                .collect();
+            if !decisions.is_empty() {
+                chat.push(sys(format!(
+                    "Recent decisions:\n{}",
+                    decisions.into_iter().rev().collect::<Vec<_>>().join("\n")
+                )));
+            }
             chat.push(sys(
                 "session tree stored in SQLite — use /fork /clone; full tree UI forthcoming",
             ));

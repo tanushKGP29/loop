@@ -13,6 +13,7 @@ use loop_telemetry::{ObservationExt, TraceAttrs};
 use serde::Serialize;
 use tracing::Span;
 
+use crate::decision::DecisionEvent;
 use crate::types::{AgentMessage, AgentToolResult};
 
 /// Name of the agent observation for one run of the loop.
@@ -21,6 +22,8 @@ pub(crate) const RUN_SPAN_NAME: &str = "loop.run";
 pub(crate) const GENERATION_SPAN_NAME: &str = "llm.generate";
 /// Name of the tool preflight (validation + approval hook) observation.
 pub(crate) const PREFLIGHT_SPAN_NAME: &str = "tool.preflight";
+/// Name of the local System One decision child span.
+pub(crate) const DECISION_SPAN_NAME: &str = "decision.evaluate";
 
 /// `loop.run`: one invocation of the agent loop.
 pub(crate) struct RunObserver {
@@ -215,6 +218,17 @@ pub(crate) fn record_tool_result(span: &Span, result: &AgentToolResult, is_error
     if is_error {
         span.record_error(&tool_result_text(result));
     }
+}
+
+/// Attach one redacted System One decision to the current Langfuse trace.
+pub(crate) fn record_decision(decision: &DecisionEvent) {
+    let span = obs::span(DECISION_SPAN_NAME);
+    span.record_output(&decision.answers);
+    span.record_metadata("tool", &decision.tool);
+    span.record_metadata("tool_confidence", &decision.tool_confidence);
+    span.record_metadata("action", &decision.action);
+    span.record_metadata("latency_ms", &decision.latency_ms);
+    span.record_metadata("model", &decision.model);
 }
 
 fn tool_result_text(result: &AgentToolResult) -> String {

@@ -1,0 +1,2 @@
+- Loop is a Rust coding agent.
+- The local decision server is Lev.

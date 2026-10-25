@@ -84,6 +84,11 @@ impl NativeEventMapper {
                 level: NoticeLevel::Info,
                 text: message.clone(),
             }],
+            #[cfg(feature = "decision")]
+            AgentEvent::Decision { decision } => vec![SessionUpdate::Notice {
+                level: NoticeLevel::Info,
+                text: decision.display_line(),
+            }],
             AgentEvent::TurnStart | AgentEvent::TurnEnd { .. } => Vec::new(),
             AgentEvent::MessageStart { message } => self.message_start(message),
             AgentEvent::MessageUpdate {

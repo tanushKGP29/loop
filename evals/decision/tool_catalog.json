@@ -1,0 +1,9 @@
+{
+  "none": "No tool is needed; answer directly.",
+  "read": "Read a file from the workspace.",
+  "write": "Create a new file or replace a file's full contents.",
+  "edit": "Modify an existing file precisely.",
+  "bash": "Run a shell command in the workspace.",
+  "web_fetch": "Fetch the contents of a known web URL.",
+  "web_search": "Search the web for current external information."
+}
