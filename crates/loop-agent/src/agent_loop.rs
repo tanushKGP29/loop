@@ -12,6 +12,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use crate::stream_fn::{resolve_stream_fn, StreamFn};
+#[cfg(feature = "decision")]
+use crate::telemetry::record_decision;
 use crate::telemetry::{
     preflight_span, record_tool_result, tool_span, turn_span, GenerationObserver, RunObserver,
 };
@@ -221,6 +223,12 @@ async fn run_loop(
     } else {
         Vec::new()
     };
+    // Reuse an advisory decision while the exact latest-user-message/tool
+    // request remains unchanged. This prevents expensive System One calls on
+    // each tool-loop iteration, while steering messages and registry updates
+    // naturally invalidate the cache.
+    #[cfg(feature = "decision")]
+    let mut decision_cache = None;
 
     loop {
         let mut has_more_tool_calls = true;
@@ -255,10 +263,17 @@ async fn run_loop(
                 }
             }
 
-            let message =
-                stream_assistant_response(current_context, &config, cancel, emit, stream_fn)
-                    .instrument(turn.clone())
-                    .await;
+            let message = stream_assistant_response(
+                current_context,
+                &config,
+                cancel,
+                emit,
+                stream_fn,
+                #[cfg(feature = "decision")]
+                &mut decision_cache,
+            )
+            .instrument(turn.clone())
+            .await;
             new_messages.push(AgentMessage::assistant(message.clone()));
 
             if matches!(message.stop_reason, StopReason::Error | StopReason::Aborted) {
@@ -394,6 +409,7 @@ async fn stream_assistant_response(
     cancel: Option<&CancellationToken>,
     emit: &AgentEventSink,
     stream_fn: &StreamFn,
+    #[cfg(feature = "decision")] decision_cache: &mut Option<crate::decision::TurnDecisionCache>,
 ) -> AssistantMessage {
     let mut messages = context.messages.clone();
     if let Some(transform) = &config.transform_context {
@@ -401,16 +417,99 @@ async fn stream_assistant_response(
     }
 
     let llm_messages = (config.convert_to_llm)(messages).await;
-    let tools: Option<Vec<Tool>> = context
-        .tools
+    // The optional decision hook runs inside the turn loop, immediately before
+    // Loop builds the model context. A missing/failed/low-confidence decision
+    // preserves the original complete tool list and system prompt.
+    #[cfg(feature = "decision")]
+    let decision_advice = if let Some(selector) = &config.decision_tool_selector {
+        match selector
+            .assess_turn_cached(context, &config.decision_workflow_resources, decision_cache)
+            .await
+        {
+            Ok((advice, reused)) if selector.requires_clarification(&advice) => {
+                if !reused {
+                    let decision = selector.event(&advice, "clarification_requested");
+                    record_decision(&decision);
+                    emit_ev(emit, AgentEvent::Decision { decision }).await;
+                }
+                let message = clarification_message(&config.model);
+                context
+                    .messages
+                    .push(AgentMessage::assistant(message.clone()));
+                emit_ev(
+                    emit,
+                    AgentEvent::MessageStart {
+                        message: AgentMessage::assistant(message.clone()),
+                    },
+                )
+                .await;
+                emit_ev(
+                    emit,
+                    AgentEvent::MessageEnd {
+                        message: AgentMessage::assistant(message.clone()),
+                    },
+                )
+                .await;
+                return message;
+            }
+            Ok((advice, reused)) => {
+                if reused {
+                    tracing::debug!("reusing advisory decision for unchanged turn context");
+                } else {
+                    let action = decision_action_text(&advice);
+                    let decision = selector.event(&advice, action);
+                    record_decision(&decision);
+                    emit_ev(emit, AgentEvent::Decision { decision }).await;
+                }
+                Some(advice)
+            }
+            Err(error) => {
+                tracing::debug!(error = %error, "decision workflow unavailable; using normal turn path");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    #[cfg(feature = "decision")]
+    let decision_tools = decision_advice.as_ref().and_then(|advice| {
+        advice.selected_tool.as_ref().and_then(|selected| {
+            context
+                .tools
+                .as_ref()?
+                .iter()
+                .find(|tool| tool.name == *selected)
+                .cloned()
+                .map(|tool| vec![tool])
+        })
+    });
+    #[cfg(feature = "decision")]
+    let active_tools = decision_tools.as_ref().or(context.tools.as_ref());
+    #[cfg(not(feature = "decision"))]
+    let active_tools = context.tools.as_ref();
+    let tools: Option<Vec<Tool>> = active_tools
         .as_ref()
         .map(|ts| ts.iter().map(|t| t.to_llm_tool()).collect());
 
+    #[cfg(feature = "decision")]
+    let system_prompt = decision_advice
+        .as_ref()
+        .and_then(|advice| advice.route.as_ref())
+        .map(|route| {
+            format!(
+                "{}\n\n{}",
+                context.system_prompt,
+                route.system_prompt_addition()
+            )
+        })
+        .unwrap_or_else(|| context.system_prompt.clone());
+    #[cfg(not(feature = "decision"))]
+    let system_prompt = context.system_prompt.clone();
     let llm_context = Context {
-        system_prompt: if context.system_prompt.is_empty() {
+        system_prompt: if system_prompt.is_empty() {
             None
         } else {
-            Some(context.system_prompt.clone())
+            Some(system_prompt)
         },
         messages: llm_messages,
         tools,
@@ -514,6 +613,36 @@ async fn stream_assistant_response(
     )
     .await;
     final_message
+}
+
+#[cfg(feature = "decision")]
+fn decision_action_text(advice: &crate::decision::TurnDecisionAdvice) -> String {
+    let tool_action = if advice.selected_tool.is_some() {
+        "narrowed_toolset"
+    } else {
+        "full_toolset"
+    };
+    match &advice.route {
+        Some(crate::decision::TaskRoute::Skill { name, .. }) => {
+            format!("{tool_action}; skill={name}")
+        }
+        Some(crate::decision::TaskRoute::Prompt { name, .. }) => {
+            format!("{tool_action}; prompt={name}")
+        }
+        None => tool_action.into(),
+    }
+}
+
+#[cfg(feature = "decision")]
+fn clarification_message(model: &crate::Model) -> AssistantMessage {
+    let mut message = AssistantMessage::pending(model);
+    message.content = vec![AssistantContent::Text(TextContent {
+        text: "Before I act, please provide the intended outcome, scope, and any relevant constraints or files."
+            .into(),
+        text_signature: None,
+    })];
+    message.stop_reason = StopReason::Stop;
+    message
 }
 
 struct ExecutedToolCallBatch {

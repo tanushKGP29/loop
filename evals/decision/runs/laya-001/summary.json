@@ -1,0 +1,240 @@
+{
+  "laya": {
+    "tuning": {
+      "n": 30,
+      "failures": 0,
+      "accuracy": {
+        "tool": 0.4,
+        "task_type": 0.6333,
+        "critical_context_missing": 0.7
+      },
+      "joint_accuracy": 0.0667,
+      "latency_ms": {
+        "mean": 1280.7,
+        "p50": 1228,
+        "p95": 1625
+      },
+      "reliability": {
+        "tool": [
+          {
+            "band": "[0.00, 0.50)",
+            "n": 21,
+            "mean_confidence": 0.2918,
+            "accuracy": 0.3333
+          },
+          {
+            "band": "[0.50, 0.70)",
+            "n": 7,
+            "mean_confidence": 0.5735,
+            "accuracy": 0.5714
+          },
+          {
+            "band": "[0.70, 0.90)",
+            "n": 1,
+            "mean_confidence": 0.7749,
+            "accuracy": 1.0
+          },
+          {
+            "band": "[0.90, 1.00]",
+            "n": 1,
+            "mean_confidence": 0.9289,
+            "accuracy": 0.0
+          }
+        ],
+        "task_type": [
+          {
+            "band": "[0.00, 0.50)",
+            "n": 27,
+            "mean_confidence": 0.1873,
+            "accuracy": 0.5926
+          },
+          {
+            "band": "[0.50, 0.70)",
+            "n": 2,
+            "mean_confidence": 0.5709,
+            "accuracy": 1.0
+          },
+          {
+            "band": "[0.70, 0.90)",
+            "n": 1,
+            "mean_confidence": 0.8739,
+            "accuracy": 1.0
+          }
+        ],
+        "critical_context_missing": [
+          {
+            "band": "[0.00, 0.50)",
+            "n": 21,
+            "mean_confidence": 0.252,
+            "accuracy": 0.619
+          },
+          {
+            "band": "[0.50, 0.70)",
+            "n": 8,
+            "mean_confidence": 0.6059,
+            "accuracy": 0.875
+          },
+          {
+            "band": "[0.70, 0.90)",
+            "n": 1,
+            "mean_confidence": 0.7166,
+            "accuracy": 1.0
+          }
+        ]
+      },
+      "tool_thresholds": [
+        {
+          "threshold": 0.5,
+          "coverage": 0.3,
+          "n": 9,
+          "tool_accuracy": 0.5556
+        },
+        {
+          "threshold": 0.6,
+          "coverage": 0.1333,
+          "n": 4,
+          "tool_accuracy": 0.5
+        },
+        {
+          "threshold": 0.7,
+          "coverage": 0.0667,
+          "n": 2,
+          "tool_accuracy": 0.5
+        },
+        {
+          "threshold": 0.75,
+          "coverage": 0.0667,
+          "n": 2,
+          "tool_accuracy": 0.5
+        },
+        {
+          "threshold": 0.8,
+          "coverage": 0.0333,
+          "n": 1,
+          "tool_accuracy": 0.0
+        },
+        {
+          "threshold": 0.9,
+          "coverage": 0.0333,
+          "n": 1,
+          "tool_accuracy": 0.0
+        },
+        {
+          "threshold": 0.95,
+          "coverage": 0.0,
+          "n": 0,
+          "tool_accuracy": null
+        }
+      ]
+    },
+    "holdout": {
+      "n": 10,
+      "failures": 0,
+      "accuracy": {
+        "tool": 0.5,
+        "task_type": 0.3,
+        "critical_context_missing": 0.6
+      },
+      "joint_accuracy": 0.0,
+      "latency_ms": {
+        "mean": 1493.0,
+        "p50": 1383,
+        "p95": 2094
+      },
+      "reliability": {
+        "tool": [
+          {
+            "band": "[0.00, 0.50)",
+            "n": 8,
+            "mean_confidence": 0.3398,
+            "accuracy": 0.5
+          },
+          {
+            "band": "[0.70, 0.90)",
+            "n": 1,
+            "mean_confidence": 0.7543,
+            "accuracy": 0.0
+          },
+          {
+            "band": "[0.90, 1.00]",
+            "n": 1,
+            "mean_confidence": 0.9168,
+            "accuracy": 1.0
+          }
+        ],
+        "task_type": [
+          {
+            "band": "[0.00, 0.50)",
+            "n": 9,
+            "mean_confidence": 0.144,
+            "accuracy": 0.2222
+          },
+          {
+            "band": "[0.70, 0.90)",
+            "n": 1,
+            "mean_confidence": 0.723,
+            "accuracy": 1.0
+          }
+        ],
+        "critical_context_missing": [
+          {
+            "band": "[0.00, 0.50)",
+            "n": 5,
+            "mean_confidence": 0.2082,
+            "accuracy": 0.6
+          },
+          {
+            "band": "[0.50, 0.70)",
+            "n": 5,
+            "mean_confidence": 0.5838,
+            "accuracy": 0.6
+          }
+        ]
+      },
+      "tool_thresholds": [
+        {
+          "threshold": 0.5,
+          "coverage": 0.2,
+          "n": 2,
+          "tool_accuracy": 0.5
+        },
+        {
+          "threshold": 0.6,
+          "coverage": 0.2,
+          "n": 2,
+          "tool_accuracy": 0.5
+        },
+        {
+          "threshold": 0.7,
+          "coverage": 0.2,
+          "n": 2,
+          "tool_accuracy": 0.5
+        },
+        {
+          "threshold": 0.75,
+          "coverage": 0.2,
+          "n": 2,
+          "tool_accuracy": 0.5
+        },
+        {
+          "threshold": 0.8,
+          "coverage": 0.1,
+          "n": 1,
+          "tool_accuracy": 1.0
+        },
+        {
+          "threshold": 0.9,
+          "coverage": 0.1,
+          "n": 1,
+          "tool_accuracy": 1.0
+        },
+        {
+          "threshold": 0.95,
+          "coverage": 0.0,
+          "n": 0,
+          "tool_accuracy": null
+        }
+      ]
+    }
+  }
+}

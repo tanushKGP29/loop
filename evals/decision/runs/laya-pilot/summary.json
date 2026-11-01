@@ -1,0 +1,89 @@
+{
+  "laya": {
+    "tuning": {
+      "n": 1,
+      "failures": 0,
+      "accuracy": {
+        "tool": 0.0,
+        "task_type": 1.0,
+        "critical_context_missing": 1.0
+      },
+      "joint_accuracy": 0.0,
+      "latency_ms": {
+        "mean": 2147.0,
+        "p50": 2147,
+        "p95": 2147
+      },
+      "reliability": {
+        "tool": [
+          {
+            "band": "[0.00, 0.50)",
+            "n": 1,
+            "mean_confidence": 0.3204,
+            "accuracy": 0.0
+          }
+        ],
+        "task_type": [
+          {
+            "band": "[0.00, 0.50)",
+            "n": 1,
+            "mean_confidence": 0.1368,
+            "accuracy": 1.0
+          }
+        ],
+        "critical_context_missing": [
+          {
+            "band": "[0.00, 0.50)",
+            "n": 1,
+            "mean_confidence": 0.4146,
+            "accuracy": 1.0
+          }
+        ]
+      },
+      "tool_thresholds": [
+        {
+          "threshold": 0.5,
+          "coverage": 0.0,
+          "n": 0,
+          "tool_accuracy": null
+        },
+        {
+          "threshold": 0.6,
+          "coverage": 0.0,
+          "n": 0,
+          "tool_accuracy": null
+        },
+        {
+          "threshold": 0.7,
+          "coverage": 0.0,
+          "n": 0,
+          "tool_accuracy": null
+        },
+        {
+          "threshold": 0.75,
+          "coverage": 0.0,
+          "n": 0,
+          "tool_accuracy": null
+        },
+        {
+          "threshold": 0.8,
+          "coverage": 0.0,
+          "n": 0,
+          "tool_accuracy": null
+        },
+        {
+          "threshold": 0.9,
+          "coverage": 0.0,
+          "n": 0,
+          "tool_accuracy": null
+        },
+        {
+          "threshold": 0.95,
+          "coverage": 0.0,
+          "n": 0,
+          "tool_accuracy": null
+        }
+      ]
+    }
+  }
+}

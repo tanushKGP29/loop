@@ -167,6 +167,13 @@ fn pending_to_entry(
             timestamp,
             summary,
         },
+        PendingSessionWrite::Custom { custom_type, data } => SessionTreeEntry::Custom {
+            id,
+            parent_id,
+            timestamp,
+            custom_type,
+            data,
+        },
         PendingSessionWrite::Leaf { target_id } => SessionTreeEntry::Leaf {
             id,
             parent_id,
@@ -676,7 +683,9 @@ impl SessionStore for SqliteSessionStore {
                 SessionTreeEntry::BranchSummary { summary, .. } => {
                     PendingSessionWrite::BranchSummary { summary }
                 }
-                SessionTreeEntry::Custom { .. } => continue,
+                SessionTreeEntry::Custom {
+                    custom_type, data, ..
+                } => PendingSessionWrite::Custom { custom_type, data },
             };
             self.append_entry(&new_reader.metadata().id, pending)
                 .await?;

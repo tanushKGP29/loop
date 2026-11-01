@@ -7,6 +7,8 @@
 
 pub mod agent;
 pub mod agent_loop;
+#[cfg(feature = "decision")]
+pub mod decision;
 pub mod harness;
 pub mod messages;
 pub mod native_backend;

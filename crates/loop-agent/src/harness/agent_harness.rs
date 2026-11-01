@@ -1,7 +1,10 @@
 //! Production orchestration: sessions, turn snapshots, tools, sandbox.
 
 use std::collections::VecDeque;
+use std::fs::OpenOptions;
 use std::future::Future;
+use std::io::Write;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -11,6 +14,8 @@ use tokio::sync::{Notify, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::agent_loop::run_agent_loop;
+#[cfg(feature = "decision")]
+use crate::decision::{DecisionEvent, DecisionToolSelector, DecisionWorkflowResources};
 use crate::harness::compaction::{
     estimate_tokens, generate_branch_summary_fallback, generate_summary_fallback,
     prepare_compaction, CompactionSettings,
@@ -129,6 +134,10 @@ pub struct AgentHarness {
     tool_execution: Mutex<ToolExecutionMode>,
     before_tool_call: Mutex<Option<BeforeToolHook>>,
     after_tool_call: Mutex<Option<AfterToolHook>>,
+    #[cfg(feature = "decision")]
+    decision_tool_selector: RwLock<Option<DecisionToolSelector>>,
+    #[cfg(feature = "decision")]
+    decision_log_path: RwLock<Option<std::path::PathBuf>>,
     bash_limits: Mutex<crate::harness::tools::BashLimits>,
     #[allow(dead_code)]
     steering_mode: Mutex<QueueMode>,
@@ -173,6 +182,10 @@ impl AgentHarness {
             tool_execution: Mutex::new(ToolExecutionMode::Parallel),
             before_tool_call: Mutex::new(None),
             after_tool_call: Mutex::new(None),
+            #[cfg(feature = "decision")]
+            decision_tool_selector: RwLock::new(None),
+            #[cfg(feature = "decision")]
+            decision_log_path: RwLock::new(None),
             bash_limits: Mutex::new(Default::default()),
             steering_mode: Mutex::new(QueueMode::OneAtATime),
             follow_up_mode: Mutex::new(QueueMode::OneAtATime),
@@ -185,6 +198,19 @@ impl AgentHarness {
     /// (workflow shell tasks).
     pub fn set_bash_limits(&self, limits: crate::harness::tools::BashLimits) {
         *self.bash_limits.lock() = limits;
+    }
+
+    /// Configure optional decision-model tool selection for future turns.
+    /// Passing `None` restores the exact normal tool path.
+    #[cfg(feature = "decision")]
+    pub async fn set_decision_tool_selector(&self, selector: Option<DecisionToolSelector>) {
+        *self.decision_tool_selector.write().await = selector;
+    }
+
+    /// Set the append-only JSONL file for structured decision observations.
+    #[cfg(feature = "decision")]
+    pub async fn set_decision_log_path(&self, path: Option<std::path::PathBuf>) {
+        *self.decision_log_path.write().await = path;
     }
 
     /// The hook registry, for hosts that emit their own events (tool gate).
@@ -1222,6 +1248,21 @@ impl AgentHarness {
         config.stream_options.reasoning = snapshot.thinking_level.to_reasoning();
         config.before_tool_call = self.before_tool_call.lock().clone();
         config.after_tool_call = self.after_tool_call.lock().clone();
+        #[cfg(feature = "decision")]
+        {
+            config.decision_tool_selector = self.decision_tool_selector.read().await.clone();
+            let resources = self.resources.read().await;
+            config.decision_workflow_resources = DecisionWorkflowResources::new(
+                resources
+                    .skills
+                    .iter()
+                    .map(|skill| (skill.name.clone(), skill.body.clone())),
+                resources
+                    .prompt_templates
+                    .iter()
+                    .map(|prompt| (prompt.name.clone(), prompt.body.clone())),
+            );
+        }
 
         let steer_q = Arc::clone(&self.steering);
         let follow_q = Arc::clone(&self.follow_up);
@@ -1256,15 +1297,44 @@ impl AgentHarness {
 
         let pending = Arc::clone(&self.pending_writes);
         let subscribers = self.subscribers.lock().clone();
+        #[cfg(feature = "decision")]
+        let decision_log_path = self.decision_log_path.read().await.clone();
 
         let emit: AgentEventSink = Arc::new(move |event| {
             let pending = Arc::clone(&pending);
             let subscribers = subscribers.clone();
+            #[cfg(feature = "decision")]
+            let decision_log_path = decision_log_path.clone();
             Box::pin(async move {
                 if let AgentEvent::MessageEnd { message } = &event {
                     pending.lock().push(PendingSessionWrite::Message {
                         message: message.clone(),
                     });
+                }
+                #[cfg(feature = "decision")]
+                if let AgentEvent::Decision { decision } = &event {
+                    if let Ok(data) = serde_json::to_value(decision) {
+                        pending.lock().push(PendingSessionWrite::Custom {
+                            custom_type: "decision".into(),
+                            data,
+                        });
+                    }
+                    if let Some(path) = decision_log_path.clone() {
+                        let decision = decision.clone();
+                        match tokio::task::spawn_blocking(move || {
+                            append_decision_jsonl(&path, &decision)
+                        })
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(error)) => {
+                                tracing::warn!(error = %error, "could not append decision log")
+                            }
+                            Err(error) => {
+                                tracing::warn!(error = %error, "decision log task failed")
+                            }
+                        }
+                    }
                 }
                 tracing::debug!(event = event.type_name(), "agent event");
                 for sub in &subscribers {
@@ -1551,6 +1621,44 @@ impl AgentHarness {
             .map_err(|e| AgentHarnessError::Other(e.to_string()))?;
 
         self.start_workflow(graph, config, progress_tx).await
+    }
+}
+
+#[cfg(feature = "decision")]
+fn append_decision_jsonl(path: &Path, decision: &DecisionEvent) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    serde_json::to_writer(&mut file, decision).map_err(std::io::Error::other)?;
+    file.write_all(b"\n")
+}
+
+#[cfg(all(test, feature = "decision"))]
+mod decision_log_tests {
+    use super::*;
+
+    #[test]
+    fn decision_log_is_append_only_jsonl() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("nested").join("decisions.jsonl");
+        let decision = DecisionEvent {
+            timestamp_ms: 1,
+            answers: std::collections::BTreeMap::new(),
+            tool: Some("read".into()),
+            tool_confidence: Some(0.93),
+            action: "narrowed_toolset".into(),
+            latency_ms: 212,
+            model: Some("lev".into()),
+        };
+        append_decision_jsonl(&path, &decision).unwrap();
+        append_decision_jsonl(&path, &decision).unwrap();
+        let contents = std::fs::read_to_string(path).unwrap();
+        let lines: Vec<&str> = contents.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let record: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(record["tool"], "read");
+        assert_eq!(record["action"], "narrowed_toolset");
     }
 }
 
